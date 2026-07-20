@@ -15557,7 +15557,7 @@ describe('xlsx generation - loops', () => {
     should(sheet.G13.v).be.eql(categories[2].posts[1].author)
   })
 
-  it('table generated with loop', async () => {
+  it('table rows generated with loop', async () => {
     const items = [{
       name: 'Alexander',
       lastname: 'Smith',
@@ -15691,6 +15691,169 @@ describe('xlsx generation - loops', () => {
     should(tableColumnEls[0].getAttribute('name')).be.eql('Name')
     should(tableColumnEls[1].getAttribute('name')).be.eql('Lastname')
     should(tableColumnEls[2].getAttribute('name')).be.eql('Age')
+  })
+
+  it('tables generated with loop', async () => {
+    const data = [
+      {
+        items: [
+          {
+            A: 'itemA1',
+            B: 'itemB1',
+            C: 'itemC1',
+            D: 'itemD1'
+          },
+          {
+            A: 'itemA2',
+            B: 'itemB2',
+            C: 'itemC2',
+            D: 'itemD2'
+          }
+        ]
+      },
+      {
+        items: [
+          {
+            A: 'itemA1',
+            B: 'itemB1',
+            C: 'itemC1',
+            D: 'itemD1'
+          },
+          {
+            A: 'itemA2',
+            B: 'itemB2',
+            C: 'itemC2',
+            D: 'itemD2'
+          }
+        ]
+      }
+    ]
+
+    const templateBuf = fs.readFileSync(
+      path.join(xlsxDirPath, 'tables-from-loop.xlsx')
+    )
+
+    const result = await reporter.render({
+      template: {
+        engine: 'handlebars',
+        recipe: 'xlsx',
+        xlsx: {
+          templateAsset: {
+            content: templateBuf
+          }
+        }
+      },
+      data: {
+        data
+      }
+    })
+
+    fs.writeFileSync(outputPath, result.content)
+
+    const { sheet } = parseSheetFromXlsxBuf(result.content)
+
+    should(sheet['!ref']).be.eql('B3:B14')
+
+    should(sheet.B5.v).be.eql('A')
+    should(sheet.C5.v).be.eql('B')
+    should(sheet.D5.v).be.eql('C')
+    should(sheet.E5.v).be.eql('D')
+    should(sheet.B6.v).be.eql(data[0].items[0].A)
+    should(sheet.C6.v).be.eql(data[0].items[0].B)
+    should(sheet.D6.v).be.eql(data[0].items[0].C)
+    should(sheet.E6.v).be.eql(data[0].items[0].D)
+    should(sheet.B7.v).be.eql(data[0].items[1].A)
+    should(sheet.C7.v).be.eql(data[0].items[1].B)
+    should(sheet.D7.v).be.eql(data[0].items[1].C)
+    should(sheet.E7.v).be.eql(data[0].items[1].D)
+
+    should(sheet.B11.v).be.eql('A')
+    should(sheet.C11.v).be.eql('B')
+    should(sheet.D11.v).be.eql('C')
+    should(sheet.E11.v).be.eql('D')
+    should(sheet.B12.v).be.eql(data[1].items[0].A)
+    should(sheet.C12.v).be.eql(data[1].items[0].B)
+    should(sheet.D12.v).be.eql(data[1].items[0].C)
+    should(sheet.E12.v).be.eql(data[1].items[0].D)
+    should(sheet.B13.v).be.eql(data[1].items[1].A)
+    should(sheet.C13.v).be.eql(data[1].items[1].B)
+    should(sheet.D13.v).be.eql(data[1].items[1].C)
+    should(sheet.E13.v).be.eql(data[1].items[1].D)
+
+    const [
+      contentTypesDoc, table1Doc, table2Doc,
+      sheetDoc, sheetRelsDoc
+    ] = await getDocumentsFromXlsxBuf(
+      result.content,
+      [
+        '[Content_Types].xml', 'xl/tables/table1.xml', 'xl/tables/table2.xml',
+        'xl/worksheets/sheet1.xml', 'xl/worksheets/_rels/sheet1.xml.rels'
+      ],
+      { strict: true }
+    )
+
+    should(Array.from(contentTypesDoc.getElementsByTagName('Override')).find((el) => (
+      el.getAttribute('PartName') === '/xl/tables/table1.xml') &&
+      el.getAttribute('ContentType').should.be.eql('application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml')
+    )).be.ok()
+
+    should(Array.from(contentTypesDoc.getElementsByTagName('Override')).find((el) => (
+      el.getAttribute('PartName') === '/xl/tables/table2.xml') &&
+      el.getAttribute('ContentType').should.be.eql('application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml')
+    )).be.ok()
+
+    const sheetTablePartsEl = sheetDoc.getElementsByTagName('tableParts')[0]
+    should(sheetTablePartsEl.getAttribute('count')).be.eql('2')
+    const sheetTablePartEls = Array.from(sheetTablePartsEl.childNodes).filter(n => n.nodeName === 'tablePart')
+    should(sheetTablePartEls.length).be.eql(2)
+
+    const rIdTableTargetMatches = new Map([['rId1', '../tables/table1.xml'], ['rId2', '../tables/table2.xml']])
+
+    for (const tablePartEl of sheetTablePartEls) {
+      const tablePartId = tablePartEl.getAttribute('r:id')
+
+      const tablePartRelEl = Array.from(sheetRelsDoc.getElementsByTagName('Relationship')).find((el) => (
+        el.getAttribute('Id') === tablePartId) &&
+        el.getAttribute('Type').should.be.eql('http://schemas.openxmlformats.org/officeDocument/2006/relationships/table')
+      )
+
+      should(tablePartRelEl).be.ok()
+
+      should(rIdTableTargetMatches.has(tablePartRelEl.getAttribute('Id'))).be.ok()
+      should(rIdTableTargetMatches.get(tablePartRelEl.getAttribute('Id'))).be.eql(tablePartRelEl.getAttribute('Target'))
+    }
+
+    should(table1Doc.documentElement.getAttribute('id')).be.eql('1')
+    should(table1Doc.documentElement.getAttribute('name')).be.eql('Table1')
+    should(table1Doc.documentElement.getAttribute('displayName')).be.eql('Table1')
+    should(table1Doc.documentElement.getAttribute('ref')).be.eql('B5:E7')
+    should(table1Doc.getElementsByTagName('autoFilter')[0]?.getAttribute('ref')).be.eql('B5:E7')
+
+    const table1Columns = table1Doc.documentElement.getElementsByTagName('tableColumns')[0]
+    const table1ColumnEls = Array.from(table1Columns.childNodes).filter(n => n.nodeName === 'tableColumn')
+
+    should(table1ColumnEls.length).be.eql(4)
+
+    should(table1ColumnEls[0].getAttribute('name')).be.eql('A')
+    should(table1ColumnEls[1].getAttribute('name')).be.eql('B')
+    should(table1ColumnEls[2].getAttribute('name')).be.eql('C')
+    should(table1ColumnEls[3].getAttribute('name')).be.eql('D')
+
+    should(table2Doc.documentElement.getAttribute('id')).be.eql('2')
+    should(table2Doc.documentElement.getAttribute('name')).be.eql('Table2')
+    should(table2Doc.documentElement.getAttribute('displayName')).be.eql('Table2')
+    should(table2Doc.documentElement.getAttribute('ref')).be.eql('B11:E13')
+    should(table2Doc.getElementsByTagName('autoFilter')[0]?.getAttribute('ref')).be.eql('B11:E13')
+
+    const table2Columns = table2Doc.documentElement.getElementsByTagName('tableColumns')[0]
+    const table2ColumnEls = Array.from(table2Columns.childNodes).filter(n => n.nodeName === 'tableColumn')
+
+    should(table2ColumnEls.length).be.eql(4)
+
+    should(table2ColumnEls[0].getAttribute('name')).be.eql('A')
+    should(table2ColumnEls[1].getAttribute('name')).be.eql('B')
+    should(table2ColumnEls[2].getAttribute('name')).be.eql('C')
+    should(table2ColumnEls[3].getAttribute('name')).be.eql('D')
   })
 
   it('invoice', async () => {

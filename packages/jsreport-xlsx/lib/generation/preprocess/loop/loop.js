@@ -1,5 +1,11 @@
 const path = require('path')
-const { nodeListToArray, isWorksheetFile, isWorksheetRelsFile, getSheetInfo, getCellInfo, getDataHelperCall, getStyleFile, getStyleInfo } = require('../../../utils')
+const { createIdCollectionManager } = require('../../idManager')
+const { createListCollectionManager } = require('../../listManager')
+const {
+  nodeListToArray, isWorksheetFile, isWorksheetRelsFile,
+  getSheetInfo, getCellInfo, getStyleInfo, getStyleFile,
+  processOpeningTag, processClosingTag, getDataHelperCall, getDataHelperBlockEndCall
+} = require('../../../utils')
 const { parseCellRef, getColumnFor, getPixelWidthOfValue, getFontSizeFromStyle, evaluateCellRefsFromExpression } = require('../../../cellUtils')
 const generateDataTemplate = require('./generateDataTemplate')
 
@@ -71,6 +77,7 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
   const closeTagRegexp = /}/g
 
   for (const f of files.filter((f) => isWorksheetFile(f.path))) {
+    const sheetListManagers = createListCollectionManager()
     const sheetFilepath = f.path
     const sheetFilename = path.posix.basename(sheetFilepath)
     const sheetDoc = f.doc
@@ -88,7 +95,63 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
       throw new Error(`Could not find sheet info for sheet at ${sheetFilepath}`)
     }
 
-    const sheetRelsDoc = files.find((file) => isWorksheetRelsFile(sheetFilename, file.path))?.doc
+    const sheetRelsFile = files.find((file) => isWorksheetRelsFile(sheetFilename, file.path))
+    const sheetRelsDoc = sheetRelsFile?.doc
+    let sheetRelsEls
+
+    if (sheetRelsDoc) {
+      const relationshipNodeName = 'Relationship'
+      const relationshipNameProperty = 'Id'
+
+      sheetRelsEls = Array.from(
+        sheetRelsDoc.documentElement.childNodes
+      ).filter((n) => n.nodeName === relationshipNodeName)
+
+      const localIdManagers = createIdCollectionManager()
+      const localListManagers = createListCollectionManager()
+
+      localIdManagers.set('relationship', {
+        prefix: 'rId',
+        fromItems: {
+          getIds: () => sheetRelsEls.map((el) => el.getAttribute(relationshipNameProperty)),
+          getNumberId: (id) => {
+            const regExp = /^rId(\d+)$/
+            const match = regExp.exec(id)
+
+            if (!match || !match[1]) {
+              return null
+            }
+
+            return parseInt(match[1], 10)
+          }
+        }
+      })
+
+      localListManagers.set('relationship', {
+        nodeName: relationshipNodeName,
+        keyPropertyName: relationshipNameProperty,
+        fromItems () {
+          const items = []
+
+          for (const relationshipEl of sheetRelsEls) {
+            const id = relationshipEl.getAttribute(relationshipNameProperty)
+
+            items.push([id, {
+              Type: relationshipEl.getAttribute('Type'),
+              Target: relationshipEl.getAttribute('Target')
+            }])
+          }
+
+          return items
+        }
+      })
+
+      sharedData.fileDataMap.set(sheetRelsFile.path, {
+        idManagers: localIdManagers,
+        listManagers: localListManagers
+      })
+    }
+
     const sheetDataChildEls = Array.from(sheetDataEl.childNodes)
     const lastRowIdx = sheetDataChildEls.filter((n) => n.nodeName === 'row').length - 1
 
@@ -161,53 +224,70 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
       }
     }
 
-    const tableParts = {
-      filePaths: [],
-      refsMeta: new Map(),
-      refByCellRefs: new Map(),
-      refSourceEls: [],
-      fileIdxByColumnCellRefs: new Map(),
-      columnsMetaByFileIdx: new Map()
-    }
+    const tableParts = []
+    const tablePartNodeName = 'tablePart'
 
-    // check if there are tables, if there are we need to update its refs at runtime
+    // check if there are tables, if there are we need to update its refs, and maybe its
+    // columns names (if they are dynamic) at runtime
     const tablePartsEl = sheetDoc.getElementsByTagName('tableParts')[0]
 
-    if (tablePartsEl != null) {
-      const tablePartEls = Array.from(tablePartsEl.childNodes).filter((n) => n.nodeName === 'tablePart')
-      const relationshipEls = Array.from(sheetRelsDoc.getElementsByTagName('Relationship'))
+    const tablePartEls = Array.from(
+      tablePartsEl?.childNodes ?? []
+    ).filter((n) => n.nodeName === tablePartNodeName)
+
+    if (tablePartEls.length > 0) {
+      const tablePartNameProperty = 'r:id'
+
+      sheetListManagers.set('tablePart', {
+        nodeName: tablePartNodeName,
+        keyPropertyName: tablePartNameProperty,
+        fromItems () {
+          const items = []
+
+          for (const tablePartEl of tablePartEls) {
+            const id = tablePartEl.getAttribute(tablePartNameProperty)
+            items.push([id, {}])
+          }
+
+          return items
+        }
+      })
 
       for (const tablePartEl of tablePartEls) {
-        const tableRelId = tablePartEl.getAttribute('r:id')
+        const tableRelId = tablePartEl.getAttribute(tablePartNameProperty)
+        const tableRelRecord = sharedData.fileDataMap.get(sheetRelsFile.path).listManagers.get('relationship').get(tableRelId)
 
-        const tableRelEl = relationshipEls.find((rel) => (
-          rel.getAttribute('Id') === tableRelId &&
-          rel.getAttribute('Type') === 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table'
-        ))
-
-        if (tableRelEl == null) {
+        if (tableRelRecord == null) {
           throw new Error(`Could not find relationship element for table reference in sheet at ${sheetFilepath}`)
         }
 
-        const tableFilePath = path.posix.join(path.posix.dirname(sheetFilepath), tableRelEl.getAttribute('Target'))
+        const tableFilePath = path.posix.join(path.posix.dirname(sheetFilepath), tableRelRecord.Target)
         const tableDoc = files.find((file) => file.path === tableFilePath).doc
 
         if (tableDoc == null) {
           throw new Error(`Could not find table document referenced in sheet at ${sheetFilepath}`)
         }
 
-        const targetRefSourceEls = [tableDoc.documentElement]
+        const targetRefSourceEls = [{ el: tableDoc.documentElement, origin: 'main' }]
         const autoFilterEl = Array.from(tableDoc.documentElement.childNodes).find((n) => n.nodeName === 'autoFilter')
 
         if (autoFilterEl != null) {
-          targetRefSourceEls.push(autoFilterEl)
+          targetRefSourceEls.push({ el: autoFilterEl, origin: 'autoFilter' })
         }
 
-        tableParts.filePaths.push(tableFilePath)
+        const tablePartItem = {
+          path: tableFilePath,
+          baseRId: tableRelId,
+          baseId: tableDoc.documentElement.getAttribute('id'),
+          baseName: tableDoc.documentElement.getAttribute('name'),
+          idVariableName: 'newId',
+          nameVariableName: 'newName',
+          mainRefParts: null,
+          refsMeta: new Map(),
+          dynamicColumnsMeta: new Map()
+        }
 
-        const tableFileIdx = tableParts.filePaths.length - 1
-
-        for (const targetRefSourceEl of targetRefSourceEls) {
+        for (const { el: targetRefSourceEl, origin } of targetRefSourceEls) {
           const rangeRef = targetRefSourceEl.getAttribute('ref')
           const rangeParts = rangeRef.split(':')
 
@@ -215,68 +295,53 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
             throw new Error(`Unexpected range ref format "${rangeRef}" in table reference in sheet at ${sheetFilepath}`)
           }
 
-          let refMeta = tableParts.refsMeta.get(rangeRef)
-
-          if (refMeta == null) {
-            refMeta = {}
-
-            tableParts.refsMeta.set(rangeRef, refMeta)
-
-            refMeta.tableFilePathIdx = tableParts.filePaths.length - 1
-            refMeta.dataVariableName = `newTableRef${tableParts.refsMeta.size - 1}`
-
-            tableParts.refByCellRefs.set(rangeParts[0], rangeRef)
-            tableParts.refByCellRefs.set(rangeParts[1], rangeRef)
+          if (origin === 'main') {
+            tablePartItem.mainRefParts = rangeParts
           }
 
-          tableParts.refSourceEls.push(targetRefSourceEl)
+          if (!tablePartItem.refsMeta.has(rangeRef)) {
+            tablePartItem.refsMeta.set(rangeRef, {
+              dataVariableName: `newTableRef${tablePartItem.refsMeta.size}`,
+              targets: []
+            })
+          }
+
+          const refMeta = tablePartItem.refsMeta.get(rangeRef)
+
+          refMeta.targets.push({ type: origin, sourceEl: targetRefSourceEl })
         }
 
         const tableColumnsEl = Array.from(tableDoc.documentElement.childNodes).find((n) => n.nodeName === 'tableColumns')
 
-        const targetColumnSourceEls = Array.from(tableColumnsEl.childNodes).reduce((acc, n, idx) => {
+        // check to see if there are column names that are dynamic and that need to be updated
+        // later after the runtime evaluation of the handlebars template
+        const targetDynamicColumnSourceEls = Array.from(tableColumnsEl.childNodes).reduce((acc, n, idx) => {
           if (n.nodeName === 'tableColumn' && n.getAttribute('name').includes('{{')) {
             acc.push({ columnIdx: idx, sourceEl: n })
           }
           return acc
         }, [])
 
-        const mainRangeRef = tableDoc.documentElement.getAttribute('ref')
-        const rangeParts = mainRangeRef.split(':')
+        if (targetDynamicColumnSourceEls.length > 0) {
+          const startRangePart = tablePartItem.mainRefParts[0]
+          const parsedStartRangePart = parseCellRef(startRangePart)
 
-        if (rangeParts.length !== 2) {
-          throw new Error(`Unexpected range ref format "${mainRangeRef}" in table reference in sheet at ${sheetFilepath}`)
+          for (const { columnIdx, sourceEl: targetColumnSourceEl } of targetDynamicColumnSourceEls) {
+            const [targetColumnLetter] = getColumnFor(
+              parsedStartRangePart.columnNumber,
+              columnIdx
+            )
+
+            const targetCellRef = `${targetColumnLetter}${parsedStartRangePart.rowNumber}`
+
+            tablePartItem.dynamicColumnsMeta.set(targetCellRef, {
+              dataVariableName: `newColumnRef${tablePartItem.dynamicColumnsMeta.size}`,
+              sourceEl: targetColumnSourceEl
+            })
+          }
         }
 
-        const startRangePart = rangeParts[0]
-        const parsedStartRangePart = parseCellRef(startRangePart)
-
-        for (const { columnIdx, sourceEl: targetColumnSourceEl } of targetColumnSourceEls) {
-          const [targetColumnLetter] = getColumnFor(
-            parsedStartRangePart.columnNumber,
-            columnIdx
-          )
-
-          const targetCellRef = `${targetColumnLetter}${parsedStartRangePart.rowNumber}`
-
-          tableParts.fileIdxByColumnCellRefs.set(targetCellRef, tableFileIdx)
-
-          const columnRefMeta = {
-            dataVariableName: `newColumnRef${tableParts.fileIdxByColumnCellRefs.size - 1}`,
-            sourceEl: targetColumnSourceEl
-          }
-
-          if (!tableParts.columnsMetaByFileIdx.has(tableFileIdx)) {
-            tableParts.columnsMetaByFileIdx.set(tableFileIdx, new Map())
-          }
-
-          tableParts.columnsMetaByFileIdx.get(tableFileIdx).set(targetColumnLetter, columnRefMeta)
-        }
-
-        sharedData.fileDataMap.set(tableFilePath, {
-          // initialize container, it is going to be fill at handlebars runtime
-          dataVariables: {}
-        })
+        tableParts.push(tablePartItem)
       }
     }
 
@@ -413,21 +478,32 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
           cellMetadata.calcChainElementIdx = calcChainElementIdx
         }
 
-        // check if we need to update table ref
-        const tableRef = tableParts.refByCellRefs.get(cellRef)
-        // check if we need to update table columns
-        const tablePartIdx = tableParts.fileIdxByColumnCellRefs.get(cellRef)
+        // check if the table needs some update related to table
+        const matchedTablePart = tableParts.reduce((acc, t, tIdx) => {
+          const rangeRef = Array.from(t.refsMeta.keys()).find((refRange) => refRange.split(':').some((ref) => ref === cellRef))
+          const isPartOfDynamicColumnRef = t.dynamicColumnsMeta.has(cellRef)
 
-        if (tableRef != null || tablePartIdx != null) {
-          cellMetadata.tablePart = {}
+          if (rangeRef != null || isPartOfDynamicColumnRef) {
+            const result = {
+              idx: tIdx
+            }
 
-          if (tableRef != null) {
-            cellMetadata.tablePart.ref = tableRef
+            if (rangeRef != null) {
+              result.ref = rangeRef
+            }
+
+            if (isPartOfDynamicColumnRef) {
+              result.dynamicColumn = true
+            }
+
+            return result
           }
 
-          if (tablePartIdx != null) {
-            cellMetadata.tablePart.columnsFileIdx = tablePartIdx
-          }
+          return acc
+        }, null)
+
+        if (matchedTablePart) {
+          cellMetadata.tablePart = matchedTablePart
         }
 
         const styleId = cellEl.getAttribute('s')
@@ -938,6 +1014,20 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
       }
     }
 
+    // set the corresponding loop hierarchy id for each table part, if any of its cells is part of a loop
+    for (const tablePart of tableParts) {
+      const parsedStartTableCellRef = parseCellRef(tablePart.mainRefParts[0])
+
+      const loopDetectionResult = getParentLoop(dynamicParts.loops, {
+        rowNumber: parsedStartTableCellRef.rowNumber,
+        columnNumber: parsedStartTableCellRef.columnNumber
+      })
+
+      if (loopDetectionResult != null) {
+        tablePart.loopHierarchyId = loopDetectionResult.loopDetected.hierarchyId
+      }
+    }
+
     if (dynamicParts.openLoops.length > 0) {
       const loopInfoCalls = dynamicParts.openLoops.map((l) => `- ${l.type} loop starting at cell ${l.start.cellRef}`)
       throw new Error(`Unable to find end of loop ({{/each}}) for the following loop calls in ${f.path}:\n${loopInfoCalls.join('\n')}`)
@@ -961,6 +1051,10 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
         id: sheetInfo.id,
         name: sheetInfo.name
       },
+      relsPath: sheetRelsFile?.path,
+      listManagers: sheetListManagers,
+      dataVariables: {},
+      tables: tableParts,
       dataTemplate,
       templateItems,
       runtime: {
@@ -984,7 +1078,7 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
           },
           data: new Map()
         },
-        tables: tableParts
+        trackedTables: new Map()
       },
       mergeCellItems: [],
       dataItems: []
@@ -999,7 +1093,7 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
 
       // update dimension if needed
       if (dimensionEl) {
-        dimensionEl.setAttribute('ref', getDataHelperCall('dimension', null, { isBlock: false }))
+        dimensionEl.setAttribute('ref', '{{@newDimensionRef}}')
       }
 
       // replacing <mergeCells> with a helper call that will generate the final merge cells definitions
@@ -1031,26 +1125,51 @@ module.exports = ({ files, sharedData, addEndCallback }) => {
         )
       }
 
-      // update table refs if needed
-      if (tableParts.refSourceEls.length > 0) {
-        for (const refSourceEl of tableParts.refSourceEls) {
-          const rangeRef = refSourceEl.getAttribute('ref')
-          const refMeta = tableParts.refsMeta.get(rangeRef)
-          refSourceEl.setAttribute('ref', `{{@${refMeta.dataVariableName}}}`)
+      // update sheet relationships
+      if (sheetRelsFile) {
+        const startCallForRelationship = getDataHelperCall('listRecords', { name: 'relationship', path: sheetRelsFile.path })
+
+        if (sheetRelsEls.length > 0) {
+          processOpeningTag(sheetRelsDoc, sheetRelsEls[0], startCallForRelationship)
+          processClosingTag(sheetRelsDoc, sheetRelsEls[sheetRelsEls.length - 1], getDataHelperBlockEndCall())
+        } else {
+          const fakeEl = processOpeningTag(sheetRelsDoc, false, startCallForRelationship)
+          sheetRelsDoc.documentElement.appendChild(fakeEl)
+          processClosingTag(sheetRelsDoc, fakeEl, getDataHelperBlockEndCall())
         }
-
-        delete tableParts.refByCellRefs
-
-        // remove dom references
-        delete tableParts.refSourceEls
       }
 
-      // update table columns if needed
-      for (const columnsMeta of tableParts.columnsMetaByFileIdx.values()) {
-        for (const columnMeta of columnsMeta.values()) {
-          columnMeta.sourceEl.setAttribute('name', `{{@${columnMeta.dataVariableName}}}`)
-          // remove dom references
-          delete columnMeta.sourceEl
+      // update tablePart in sheet
+      if (tablePartEls.length > 0) {
+        tablePartsEl.setAttribute('count', '{{@newTablePartsCount}}')
+        const startCallForTablePart = getDataHelperCall('listRecords', { name: 'tablePart', path: sheetFilepath })
+        processOpeningTag(sheetDoc, tablePartEls[0], startCallForTablePart)
+        processClosingTag(sheetDoc, tablePartEls[tablePartEls.length - 1], getDataHelperBlockEndCall())
+      }
+
+      // update table document
+      for (const tablePart of tableParts) {
+        // make id and name dynamic, they will be based on the results of tables execution
+        const tableDoc = files.find((f) => f.path === tablePart.path).doc
+
+        tableDoc.documentElement.setAttribute('id', `{{@${tablePart.idVariableName}}}`)
+        tableDoc.documentElement.setAttribute('name', `{{@${tablePart.nameVariableName}}}`)
+        // according to spec the name and displayName should be in sync
+        tableDoc.documentElement.setAttribute('displayName', `{{@${tablePart.nameVariableName}}}`)
+
+        // update table refs if needed
+        for (const tableRefsMeta of tablePart.refsMeta.values()) {
+          for (const tableRefMetaTarget of tableRefsMeta.targets) {
+            tableRefMetaTarget.sourceEl.setAttribute('ref', `{{@${tableRefsMeta.dataVariableName}}}`)
+          }
+
+          delete tableRefsMeta.targets
+        }
+
+        // update dynamic columns if needed
+        for (const tableDynamicColumnMeta of tablePart.dynamicColumnsMeta.values()) {
+          tableDynamicColumnMeta.sourceEl.setAttribute('name', `{{@${tableDynamicColumnMeta.dataVariableName}}}`)
+          delete tableDynamicColumnMeta.sourceEl
         }
       }
 
@@ -1242,28 +1361,6 @@ function checkAndGetLoopsToProcess (currentFilePath, loopsDetected, currentRowNu
   verticalLoops = verticalLoops.filter((l) => l.end?.rowNumber === currentRowNumber)
 
   return [...dynamicLoops, ...rowLoops, ...blockLoops, ...verticalLoops]
-}
-
-function processOpeningTag (doc, refElement, helperCall) {
-  const fakeElement = doc.createElement('xlsxRemove')
-  fakeElement.textContent = helperCall
-
-  if (refElement !== false) {
-    refElement.parentNode.insertBefore(fakeElement, refElement)
-  }
-
-  return fakeElement
-}
-
-function processClosingTag (doc, refElement, closeCall) {
-  const fakeElement = doc.createElement('xlsxRemove')
-  fakeElement.textContent = closeCall
-
-  if (refElement !== false) {
-    refElement.parentNode.insertBefore(fakeElement, refElement.nextSibling)
-  }
-
-  return fakeElement
 }
 
 function matchWithGlobalRegExp (str, regexp) {

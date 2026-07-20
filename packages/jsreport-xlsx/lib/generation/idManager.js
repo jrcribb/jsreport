@@ -1,74 +1,26 @@
 
-function createCollectionManager (isGlobal = true) {
+function createIdCollectionManager () {
   const collection = new Map()
 
-  if (!isGlobal) {
-    return function (filePath) {
-      assertOk(filePath != null, 'filePath is required')
-      return createCollectionInterface(collection, filePath)
-    }
-  }
-
-  return createCollectionInterface(collection)
-}
-
-function createCollectionInterface (collection, filePath) {
   return {
-    has (...args) {
-      const [key] = args
-
+    has (key) {
       assertOk(key != null, 'key is required')
-
-      if (filePath == null) {
-        return collection.has(key)
-      }
-
-      return collection.has(filePath) ? collection.get(filePath).has(key) : false
+      return collection.has(key)
     },
-    get (...args) {
-      const [key] = args
-
+    get (key) {
       assertOk(key != null, 'key is required')
-
-      if (filePath == null) {
-        return collection.get(key)
-      }
-
-      return collection.get(filePath)?.get(key)
+      return collection.get(key)
     },
-    set (...args) {
-      const [key, managerSpec] = args
-
+    set (key, managerSpec) {
       assertOk(key != null, 'key is required')
       assertOk(managerSpec != null, 'managerSpec is required')
 
-      if (filePath == null) {
-        const manager = createIdManager(key, managerSpec)
-        collection.set(key, manager)
-        return manager
-      }
-
-      let managersMap
-
-      if (collection.has(filePath)) {
-        managersMap = collection.get(filePath)
-      } else {
-        managersMap = new Map()
-        collection.set(filePath, managersMap)
-      }
-
       const manager = createIdManager(key, managerSpec)
-      managersMap.set(key, manager)
-
+      collection.set(key, manager)
       return manager
     },
     all () {
-      if (filePath == null) {
-        return collection.entries()
-      }
-
-      const managersMap = collection.get(filePath) ?? []
-      return managersMap.entries()
+      return collection.entries()
     }
   }
 }
@@ -145,7 +97,4 @@ function assertOk (valid, message) {
   }
 }
 
-// NOTE: we actually don't need to expose the createIdManager, but we need to use it
-// temporarily somewhere else in utils, so until we migrate that code we expose it.
-module.exports.createIdManager = createIdManager
-module.exports.createCollectionManager = createCollectionManager
+module.exports.createIdCollectionManager = createIdCollectionManager

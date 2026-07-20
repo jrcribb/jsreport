@@ -547,8 +547,7 @@ function getSheetInfo (_sheetPath, workbookSheetsEls, workbookRelsEls) {
   return {
     id: sheetEl.getAttribute('sheetId'),
     name: sheetEl.getAttribute('name'),
-    rId: sheetRefEl.getAttribute('Id'),
-    path: sheetPath
+    rId: sheetRefEl.getAttribute('Id')
   }
 }
 
@@ -677,6 +676,28 @@ function serializeXmlAsHandlebarsSafeOutput (docOrNode) {
   )
 }
 
+function processOpeningTag (doc, refElement, helperCall) {
+  const fakeElement = doc.createElement('xlsxRemove')
+  fakeElement.textContent = helperCall
+
+  if (refElement !== false) {
+    refElement.parentNode.insertBefore(fakeElement, refElement)
+  }
+
+  return fakeElement
+}
+
+function processClosingTag (doc, refElement, closeCall) {
+  const fakeElement = doc.createElement('xlsxRemove')
+  fakeElement.textContent = closeCall
+
+  if (refElement !== false) {
+    refElement.parentNode.insertBefore(fakeElement, refElement.nextSibling)
+  }
+
+  return fakeElement
+}
+
 module.exports.contentIsXML = (content) => {
   if (!Buffer.isBuffer(content) && typeof content !== 'string') {
     return false
@@ -717,6 +738,8 @@ module.exports.findOrCreateChildNode = findOrCreateChildNode
 module.exports.findChildNode = findChildNode
 module.exports.recreateNodeWithNewDoc = recreateNodeWithNewDoc
 module.exports.nodeListToArray = nodeListToArray
+module.exports.processOpeningTag = processOpeningTag
+module.exports.processClosingTag = processClosingTag
 module.exports.isWorksheetFile = isWorksheetFile
 module.exports.isWorksheetRelsFile = isWorksheetRelsFile
 module.exports.getDataHelperCall = getDataHelperCall

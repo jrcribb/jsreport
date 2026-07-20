@@ -2,25 +2,91 @@
 /* eslint no-unused-vars: 0 */
 
 function xlsxContext (options) {
+  const jsreport = require('jsreport-proxy')
   const Handlebars = require('handlebars')
   const { type: contextType, path: xlsxFilePath } = options.hash
   let data
 
+  const applyFileDataVariables = (targetData, targetFilePath, instanceIdx) => {
+    const baseFileDataVariables = jsreport.req.context.__xlsxSharedData.fileDataMap.get(targetFilePath)?.dataVariables
+
+    if (baseFileDataVariables) {
+      Object.assign(targetData, baseFileDataVariables)
+    }
+
+    if (instanceIdx != null) {
+      // only apply instance data variables when passing explicit index
+      const dynamicFileMeta = jsreport.req.context.__xlsxSharedData.dynamicFileMap.get(targetFilePath)
+      const instance = dynamicFileMeta.instances[instanceIdx]
+
+      if (instance.dataVariables) {
+        Object.assign(targetData, instance.dataVariables)
+      }
+
+      return instance
+    }
+  }
+
   if (contextType === 'global') {
-    const jsreport = require('jsreport-proxy')
     data = Handlebars.createFrame(options.data)
     data.evalId = jsreport.req.context.__xlsxSharedData.evalId
   } else if (contextType === 'file') {
-    const jsreport = require('jsreport-proxy')
-    const fileData = jsreport.req.context.__xlsxSharedData.fileDataMap.get(xlsxFilePath)
-
     data = Handlebars.createFrame(options.data)
 
-    if (fileData?.dataVariables != null) {
-      Object.assign(data, fileData.dataVariables)
+    let targetFilePath
+
+    // we will have dynamicFile metadata when the file is consumed in the wrapper "dynamicFile" call,
+    // in this mode the file will be called iteratively for each instance of the dynamic file,
+    // and the corresponding data variables will be applied for each instance
+    if (data.dynamicFile) {
+      // xlsxFilePath here is just the index of the instance
+      const instance = applyFileDataVariables(data, data.dynamicFile.baseXlsxPath, xlsxFilePath)
+      targetFilePath = instance.path
+    } else {
+      applyFileDataVariables(data, xlsxFilePath)
+      targetFilePath = xlsxFilePath
     }
 
-    data.xlsxFilePath = xlsxFilePath
+    data.xlsxFilePath = targetFilePath
+  } else if (contextType === 'dynamicFile' || contextType === 'dynamicInstances') {
+    // in both types we call the body for each instance of the dynamic file,
+    // in the "dynamicFile" case we expect to insert metadata about the base file
+    // for later usage with xlsxContext "file", and to return the results with a special
+    // separator that we will use later to recognize the new files created for each instance
+    const dynamicFileMeta = jsreport.req.context.__xlsxSharedData.dynamicFileMap.get(xlsxFilePath)
+
+    const targetData = Handlebars.createFrame(options.data)
+
+    if (contextType === 'dynamicFile') {
+      targetData.dynamicFile = {
+        baseXlsxPath: xlsxFilePath
+      }
+    }
+
+    const results = []
+
+    for (let i = 0; i < dynamicFileMeta.instances.length; i++) {
+      const activeInstance = dynamicFileMeta.instances[i]
+
+      if (contextType === 'dynamicFile') {
+        // here we just add the active instance idx,
+        // we expect to apply the file, instance data variables in the xlsxContext "file" call
+        targetData.dynamicFile.activeInstanceIdx = i
+      } else if (contextType === 'dynamicInstances') {
+        // and for this case we apply the file, instance data variables directly,
+        // because usage of this helper is expected to be used independently of the
+        // current file
+        applyFileDataVariables(targetData, xlsxFilePath, i)
+      }
+
+      const result = options.fn(i, {
+        data: targetData
+      })
+
+      results.push(result)
+    }
+
+    return results.join(contextType === 'dynamicFile' ? '$$$xlsxInstanceFile$$$' : '')
   }
 
   const context = {}
@@ -203,7 +269,7 @@ const __xlsxD = (function () {
     const newData = Handlebars.createFrame(options.data)
     const isVertical = Object.hasOwn(options.hash, 'vertical')
 
-    const { helpers: { generationUtils: { getParentLoopItemByHierarchy } } } = getSharedData()
+    const { helpers: { generationUtils: { getParentLoopItem } } } = getSharedData()
     const { runtime } = getFileData(options.data.xlsxFilePath)
 
     assertOk(start != null, 'start arg is required')
@@ -261,7 +327,7 @@ const __xlsxD = (function () {
       loopItem.trackedCells = new Map()
     }
 
-    const parentLoopItem = getParentLoopItemByHierarchy(loopItem, runtime.loops.data)
+    const parentLoopItem = getParentLoopItem(loopItem, runtime.loops.data, 'hierarchyId')
 
     let container
 
@@ -331,6 +397,8 @@ const __xlsxD = (function () {
         // we detect if the user is expecting block params by checking options.fn.blockParams
         newOptions.blockParams = [dataForItem, newData.key].slice(0, options.fn.blockParams)
       }
+
+      loopItem.iterationIdx = i
 
       options.fn(dataForItem, newOptions)
     }
@@ -472,7 +540,7 @@ const __xlsxD = (function () {
       }
     } = getSharedData()
 
-    const { templateItems, runtime } = getFileData(options.data.xlsxFilePath)
+    const { templateItems, tables, runtime } = getFileData(options.data.xlsxFilePath)
 
     const rowElementItem = templateItems.data[templateItems.rowNumberElementIdxMap.get(originalRowNumber)]
     const rowElementItemMetadata = templateItems.elementMetaMap.get(rowElementItem)
@@ -609,24 +677,50 @@ const __xlsxD = (function () {
     }
 
     // update table ref if the cell is part of a table ref
-    if (cellElementMetadata?.tablePart?.ref != null) {
-      const tableRef = cellElementMetadata.tablePart.ref
-      const tableRefParts = cellElementMetadata.tablePart.ref.split(':')
-      const type = originalCellRef === tableRefParts[0] ? 'start' : 'end'
+    if (cellElementMetadata?.tablePart?.ref) {
+      const tablePart = tables[cellElementMetadata.tablePart.idx]
+      const currentRefParts = cellElementMetadata.tablePart.ref.split(':')
+      const isMainRef = tablePart.mainRefParts.join(':') === cellElementMetadata.tablePart.ref
+      const isStartOfRange = currentRefParts[0] === originalCellRef
 
-      const tableRefMeta = runtime.tables.refsMeta.get(tableRef)
-      const tableFilePath = runtime.tables.filePaths[tableRefMeta.tableFilePathIdx]
-
-      const { dataVariables: tableDataVariables } = getFileData(tableFilePath)
-      let newTableRef
-
-      if (type === 'start') {
-        newTableRef = `${trackedCell.last}:${tableRefParts[1]}`
-      } else {
-        newTableRef = `${tableRefParts[0]}:${trackedCell.last}`
+      if (!runtime.trackedTables.has(cellElementMetadata.tablePart.idx)) {
+        runtime.trackedTables.set(cellElementMetadata.tablePart.idx, {
+          instances: []
+        })
       }
 
-      tableDataVariables[tableRefMeta.dataVariableName] = newTableRef
+      const trackedTable = runtime.trackedTables.get(cellElementMetadata.tablePart.idx)
+      let tableInstance
+
+      if (isMainRef && isStartOfRange) {
+        const instanceId = loopItem == null ? 'root' : `${loopItem.id}.${loopItem.iterationIdx}`
+        tableInstance = trackedTable.instances[trackedTable.instances.length - 1]
+
+        if (!tableInstance || tableInstance.id !== instanceId) {
+          const instance = {
+            id: instanceId,
+            columnNames: new Map(),
+            refsParts: new Map()
+          }
+
+          trackedTable.instances.push(instance)
+          tableInstance = instance
+        }
+      } else {
+        tableInstance = trackedTable.instances[trackedTable.instances.length - 1]
+      }
+
+      if (!tableInstance.refsParts.has(cellElementMetadata.tablePart.ref)) {
+        tableInstance.refsParts.set(cellElementMetadata.tablePart.ref, { start: null, end: null })
+      }
+
+      const partsOfCurrentRef = tableInstance.refsParts.get(cellElementMetadata.tablePart.ref)
+
+      if (isStartOfRange) {
+        partsOfCurrentRef.start = trackedCell.last
+      } else {
+        partsOfCurrentRef.end = trackedCell.last
+      }
     }
 
     // we try to resolve lazy formulas here if any
@@ -868,11 +962,11 @@ const __xlsxD = (function () {
       }
 
       if (cellType === 'inlineStr') {
-        if (cellElementMetadata?.tablePart?.columnsFileIdx != null) {
-          const tableFilePath = runtime.tables.filePaths[cellElementMetadata.tablePart.columnsFileIdx]
-          const { dataVariables: tableDataVariables } = getFileData(tableFilePath)
-          const columnMeta = runtime.tables.columnsMetaByFileIdx.get(cellElementMetadata.tablePart.columnsFileIdx).get(columnLetter)
-          tableDataVariables[columnMeta.dataVariableName] = cellValue ?? ''
+        // update table dynamic column names if the cell has it
+        if (cellElementMetadata?.tablePart?.dynamicColumn) {
+          const trackedTable = runtime.trackedTables.get(cellElementMetadata.tablePart.idx)
+          const tableInstance = trackedTable.instances[trackedTable.instances.length - 1]
+          tableInstance.columnNames.set(originalCellRef, cellValue ?? '')
         }
 
         // only consider the raw value if the value was not empty
@@ -1013,28 +1107,141 @@ const __xlsxD = (function () {
 
   cValue.dynamicParameters = true
 
-  // solve any pending formulas that were waiting to complete
-  function lazyFormulas (options) {
-    const { helpers: { generationUtils: { tryToResolvePendingLazyFormula } } } = getSharedData()
-    const { runtime } = getFileData(options.data.xlsxFilePath)
+  // do any last pending processing
+  function lastProcessing (options) {
+    const {
+      idManagers, listManagers, dynamicFileMap,
+      helpers: {
+        dirname, relativeFilename,
+        cellUtils: { getColumnFor },
+        generationUtils: { tryToResolvePendingLazyFormula }
+      }
+    } = getSharedData()
 
-    if (runtime.lazyFormulas.data.size === 0) {
-      return ''
+    const { relsPath, listManagers: sheetListManagers, dataVariables: sheetDataVariables, tables, runtime } = getFileData(options.data.xlsxFilePath)
+
+    const contextTypesOverrideListManager = listManagers.get('contentTypes.override')
+
+    // update dimension ref
+    if (runtime.dimension) {
+      const startCellRef = getColumnFor(runtime.dimension.start.columnNumber)[0] + runtime.dimension.start.rowNumber
+      const endCellRef = getColumnFor(runtime.dimension.end.columnNumber)[0] + runtime.dimension.end.rowNumber
+      let newDimensionRef
+
+      if (startCellRef === endCellRef) {
+        newDimensionRef = startCellRef
+      } else {
+        newDimensionRef = `${startCellRef}:${endCellRef}`
+      }
+
+      sheetDataVariables.newDimensionRef = newDimensionRef
     }
 
-    const targetLazyFormulaIds = [...runtime.lazyFormulas.data.keys()]
+    // transform the collected table instances to new tables and data variables for the xml template
+    if (runtime.trackedTables.size > 0) {
+      for (const [tableIdx, trackedTable] of runtime.trackedTables) {
+        const tablePart = tables[tableIdx]
+        const tableFilePath = tablePart.path
 
-    for (const lazyFormulaId of targetLazyFormulaIds) {
-      const lazyFormulaInfo = runtime.lazyFormulas.data.get(lazyFormulaId)
-      const pendingCellRefs = [...lazyFormulaInfo.pendingCellRefs]
+        // mark the table file as dynamic file for later processing at the
+        // xml rendering step
+        const dynamicFile = { instances: [] }
 
-      for (const cellRef of pendingCellRefs) {
-        // resolve all the lazy pending formulas, the reason we got until this point is likely
-        // that a formula is referencing a cell that does not have a definition in the sheet
-        tryToResolvePendingLazyFormula(
-          lazyFormulaId, cellRef, runtime.lazyFormulas,
-          runtime.trackedCells, runtime.loops.data
-        )
+        let tablePrefixName
+
+        sheetDataVariables.newTablePartsCount = trackedTable.instances.length
+
+        for (let instanceIdx = 0; instanceIdx < trackedTable.instances.length; instanceIdx++) {
+          const tableInstance = trackedTable.instances[instanceIdx]
+
+          const instanceData = {
+            path: null,
+            dataVariables: {}
+          }
+
+          if (instanceIdx === 0) {
+            // the first instance always map to the existing path
+            instanceData.path = tableFilePath
+
+            instanceData.dataVariables[tablePart.idVariableName] = tablePart.baseId
+            instanceData.dataVariables[tablePart.nameVariableName] = tablePart.baseName
+          } else {
+            const newTableId = idManagers.get('tables').generate().numId
+            instanceData.path = `xl/tables/table${newTableId}.xml`
+
+            if (tablePrefixName == null) {
+              // extract the whole text before last digits
+              const match = tablePart.baseName.match(/^(.*?)(\d+)$/)
+              tablePrefixName = match ? match[1] : `${tablePart.baseName}_`
+            }
+
+            let newRId
+
+            if (relsPath) {
+              const { idManagers: sheetRelIdManagers, listManagers: sheetRelsListManagers } = getFileData(relsPath)
+              const relationshipIdManager = sheetRelIdManagers.get('relationship')
+              const relationshipListManager = sheetRelsListManagers.get('relationship')
+
+              newRId = relationshipIdManager.generate().id
+
+              relationshipListManager.set(newRId, {
+                Type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table',
+                // the target is relative from the sheet file path to the table file path
+                Target: relativeFilename(dirname(options.data.xlsxFilePath), instanceData.path)
+              })
+            }
+
+            if (newRId == null) {
+              throw new Error(`Failed to generate relationship id for table ${instanceData.path} of sheet ${options.data.xlsxFilePath}`)
+            }
+
+            const sheetTablePartListManager = sheetListManagers.get('tablePart')
+
+            sheetTablePartListManager.set(newRId, {})
+
+            instanceData.dataVariables[tablePart.idVariableName] = newTableId
+            instanceData.dataVariables[tablePart.nameVariableName] = `${tablePrefixName}${newTableId}`
+          }
+
+          if (!contextTypesOverrideListManager.has(`/${instanceData.path}`)) {
+            contextTypesOverrideListManager.set(`/${instanceData.path}`, {
+              ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml'
+            })
+          }
+
+          for (const [originalCellRef, cellValue] of tableInstance.columnNames) {
+            const columnMeta = tablePart.dynamicColumnsMeta.get(originalCellRef)
+            instanceData.dataVariables[columnMeta.dataVariableName] = cellValue
+          }
+
+          for (const [ref, part] of tableInstance.refsParts) {
+            const refMeta = tablePart.refsMeta.get(ref)
+            instanceData.dataVariables[refMeta.dataVariableName] = `${part.start}:${part.end}`
+          }
+
+          dynamicFile.instances.push(instanceData)
+        }
+
+        dynamicFileMap.set(tableFilePath, dynamicFile)
+      }
+    }
+
+    // solve any pending formulas that were waiting to complete
+    if (runtime.lazyFormulas.data.size > 0) {
+      const targetLazyFormulaIds = [...runtime.lazyFormulas.data.keys()]
+
+      for (const lazyFormulaId of targetLazyFormulaIds) {
+        const lazyFormulaInfo = runtime.lazyFormulas.data.get(lazyFormulaId)
+        const pendingCellRefs = [...lazyFormulaInfo.pendingCellRefs]
+
+        for (const cellRef of pendingCellRefs) {
+          // resolve all the lazy pending formulas, the reason we got until this point is likely
+          // that a formula is referencing a cell that does not have a definition in the sheet
+          tryToResolvePendingLazyFormula(
+            lazyFormulaId, cellRef, runtime.lazyFormulas,
+            runtime.trackedCells, runtime.loops.data
+          )
+        }
       }
     }
   }
@@ -1049,22 +1256,6 @@ const __xlsxD = (function () {
     runtime.chartTitleTextXml = output
 
     return new Handlebars.SafeString(output)
-  }
-
-  // produces the final dimension ref using the information of the latest
-  // column and row numbers
-  function dimension (options) {
-    const xlsxFilePath = options.data.xlsxFilePath
-    const { runtime } = getFileData(xlsxFilePath)
-    const { helpers: { cellUtils: { getColumnFor } } } = getSharedData()
-    const startCellRef = getColumnFor(runtime.dimension.start.columnNumber)[0] + runtime.dimension.start.rowNumber
-    const endCellRef = getColumnFor(runtime.dimension.end.columnNumber)[0] + runtime.dimension.end.rowNumber
-
-    if (startCellRef === endCellRef) {
-      return startCellRef
-    }
-
-    return `${startCellRef}:${endCellRef}`
   }
 
   // produces the final <sheetData> content when rendering xml template
@@ -1324,6 +1515,69 @@ const __xlsxD = (function () {
     return new Handlebars.SafeString(output)
   }
 
+  // produce content based on list items when rendering xml template
+  function listRecords (options) {
+    const Handlebars = require('handlebars')
+    const listName = options.hash.name
+    const filePath = options.hash.path
+
+    assertOk(listName != null, 'list "name" arg is required')
+
+    let targetListManager
+
+    if (filePath != null) {
+      const { listManagers } = getFileData(filePath)
+      targetListManager = listManagers.get(listName)
+    } else {
+      const { listManagers } = getSharedData()
+      targetListManager = listManagers.get(listName)
+    }
+
+    assertOk(targetListManager != null, `list "${listName}" not found`)
+
+    const { helpers: { parseXML } } = getSharedData()
+
+    const existingXml = options.fn(this)
+    const tmpDoc = parseXML(`<fragment>${existingXml}</fragment>`)
+    const existingEls = Array.from(tmpDoc.documentElement.childNodes)
+
+    const keyToTemplateElMap = new Map()
+
+    // this reuse any existing element from the template xlsx file
+    for (const existingEl of existingEls) {
+      const keyPropertyValue = existingEl.getAttribute(targetListManager.keyPropertyName)
+
+      if (targetListManager.has(keyPropertyValue)) {
+        keyToTemplateElMap.set(keyPropertyValue, existingEl)
+      }
+    }
+
+    for (const [keyName, record] of targetListManager.all()) {
+      let targetEl
+
+      if (!keyToTemplateElMap.has(keyName)) {
+        targetEl = tmpDoc.createElement(targetListManager.nodeName)
+        tmpDoc.documentElement.appendChild(targetEl)
+      } else {
+        targetEl = keyToTemplateElMap.get(keyName)
+      }
+
+      targetEl.setAttribute(targetListManager.keyPropertyName, keyName)
+
+      for (const [prop, value] of Object.entries(record)) {
+        targetEl.setAttribute(prop, value)
+      }
+    }
+
+    const output = []
+
+    for (const el of Array.from(tmpDoc.documentElement.childNodes)) {
+      output.push(el.toString())
+    }
+
+    return new Handlebars.SafeString(output.join(''))
+  }
+
   const helpers = {
     raw,
     staticRange,
@@ -1331,13 +1585,13 @@ const __xlsxD = (function () {
     r,
     c,
     cValue,
-    lazyFormulas,
+    lastProcessing,
     chartTitleText,
-    dimension,
     sd,
     mergeCells,
     calcChain,
-    cols
+    cols,
+    listRecords
   }
 
   return {

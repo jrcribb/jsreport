@@ -32,7 +32,6 @@ module.exports = function generateDataTemplate (
         const rowNumber = item.id
         const dynamicRow = dynamicParts.rows.get(rowNumber)
 
-        const loopCallsForRow = { pre: [], post: [] }
         const cellTemplateParts = []
 
         for (const cellRef of dynamicRow.cellRefs) {
@@ -58,10 +57,6 @@ module.exports = function generateDataTemplate (
                     startIdx: loopInCell.start.helperCallStartIdx,
                     endIdx: loopInCell.start.helperCallStartIdx + (loopInCell.start.helperCall.length - 1)
                   })
-
-                  if (loopInCell.type === 'block' || loopInCell.type === 'row' || loopInCell.type === 'dynamic') {
-                    loopCallsForRow.pre.push(loopInCell.start.helperCall.replace(startLoopRegexp, getLoopCallWithDataHelperReplacer(loopInCell)))
-                  }
                 }
 
                 if (loopInCell.end.cellRef === cellRef) {
@@ -69,10 +64,6 @@ module.exports = function generateDataTemplate (
                     startIdx: loopInCell.end.helperCallStartIdx,
                     endIdx: loopInCell.end.helperCallStartIdx + (loopInCell.end.helperCall.length - 1)
                   })
-
-                  if (loopInCell.type === 'block' || loopInCell.type === 'row' || loopInCell.type === 'dynamic') {
-                    loopCallsForRow.post.push(getDataHelperBlockEndCall())
-                  }
                 }
               }
 
@@ -351,9 +342,9 @@ module.exports = function generateDataTemplate (
     }
   }
 
-  // insert a call to resolve any possible last lazy formulas
+  // insert a call to resolve any possible last processing
   dataTemplateParts.push(
-    getDataHelperCall('lazyFormulas', null, { isBlock: false })
+    getDataHelperCall('lastProcessing', null, { isBlock: false })
   )
 
   return dataTemplateParts.join('\n')

@@ -103,17 +103,17 @@ function getIncrementWithLoop (mode, { loopId, loopIndex, rowNumber, evaluatedLo
   return { increment, currentLoopIncrement, previousRootLoopIncrement, previousLoopIncrement }
 }
 
-function getParentLoopItemByHierarchy (childLoopItem, loopItems) {
-  assertOk(childLoopItem != null, 'getParentLoopItemByHierarchy childLoopItem arg is required')
-  assertOk(Array.isArray(loopItems), 'getParentLoopItemByHierarchy loopItems arg is invalid')
+function getParentLoopItem (childLoopItem, loopItems, targetId = 'id') {
+  assertOk(childLoopItem != null, 'getParentLoopItem childLoopItem arg is required')
+  assertOk(Array.isArray(loopItems), 'getParentLoopItem loopItems arg is invalid')
 
-  const parentHierarchyId = childLoopItem.hierarchyId.split('#').slice(0, -1).join('#')
+  const parentTargetId = childLoopItem[targetId].split('#').slice(0, -1).join('#')
 
-  if (parentHierarchyId === '') {
+  if (parentTargetId === '') {
     return
   }
 
-  return getLoopItemById({ idName: 'hierarchyId', idValue: parentHierarchyId }, loopItems)
+  return getLoopItemById({ idName: targetId, idValue: parentTargetId }, loopItems)
 }
 
 function getCurrentLoopItem (loopId, loopItems) {
@@ -693,7 +693,7 @@ function tryToResolvePendingLazyFormula (lazyFormulaId, cellRef, lazyFormulas, t
 
 module.exports.assertOk = assertOk
 module.exports.getIncrementWithLoop = getIncrementWithLoop
-module.exports.getParentLoopItemByHierarchy = getParentLoopItemByHierarchy
+module.exports.getParentLoopItem = getParentLoopItem
 module.exports.getCurrentLoopItem = getCurrentLoopItem
 module.exports.updateDimension = updateDimension
 module.exports.updateMergeCells = updateMergeCells

@@ -6,6 +6,7 @@ module.exports = (files, headerFooterRefs, sharedData) => {
   const documentRelsDoc = files.find(f => f.path === 'word/_rels/document.xml.rels').doc
 
   sharedData.idManagers.set('documentRels', {
+    prefix: 'rId',
     fromItems: {
       getIds: () => nodeListToArray(documentRelsDoc.getElementsByTagName('Relationship')).map((el) => el.getAttribute('Id')),
       getNumberId: (id) => {
@@ -22,6 +23,7 @@ module.exports = (files, headerFooterRefs, sharedData) => {
   })
 
   sharedData.idManagers.set('docPr', {
+    prefix: '',
     fromItems: {
       getIds: () => {
         const toProcess = [{ doc: documentDoc }]
