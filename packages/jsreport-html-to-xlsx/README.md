@@ -7,6 +7,9 @@ See https://jsreport.net/learn/html-to-xlsx
 
 ## Changelog
 
+### 4.4.2
+- update deps to fix audit
+
 ### 4.4.1
 - update deps to fix audit
 

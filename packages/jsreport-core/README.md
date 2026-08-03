@@ -350,6 +350,9 @@ jsreport.documentStore.collection('templates')
 
 ## Changelog
 
+### 4.11.0
+- logger: add support for formatters to the logger, this allows to customizing how the logs gets displayed. it includes built-in formatters (`json`, `text`, `textWithTimestamp`) and the ability to create custom formatters
+
 ### 4.10.0
 
 - update deps fix audit

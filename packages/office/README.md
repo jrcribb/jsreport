@@ -5,6 +5,10 @@ Some helpers for officed based jsreport recipes
 
 ## Changelog
 
+### 4.2.2
+- update deps to fix npm audit
+- fix setting maxContentLength, maxBodyLength to unlimited after axios update
+
 ### 4.2.1
 - update deps to fix npm audit
 

@@ -13,6 +13,10 @@
 
 ## Changelog
 
+### 4.1.2
+- update deps to fix audit
+- fix setting maxContentLength, maxBodyLength to unlimited after axios update
+
 ### 4.1.1
 - update deps to fix audit
 

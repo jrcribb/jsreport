@@ -7,6 +7,11 @@ See the documentation https://jsreport.net/learn/docx
 
 ## Changelog
 
+### 4.11.0
+- update deps to fix audit
+- add support for docxImage helper to work without placeholder image
+- handle missing w:tcW in table preprocess (Google Docs DOCX exports)
+
 ### 4.10.2
 - update deps to fix audit
 - fix section breaks not working with loop

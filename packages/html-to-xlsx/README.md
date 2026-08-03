@@ -130,6 +130,9 @@ main()
 
 ## Changelog
 
+### 1.2.2
+- update deps to fix audit
+
 ### 1.2.1
 - update deps to fix audit
 
