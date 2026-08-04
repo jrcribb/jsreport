@@ -28,9 +28,9 @@ RUN apt-get update && \
     # this condition is useful when the registry contain different latest versions
     # per architecture, if the versions match then just use the same version number on both paths
     if [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
-    apt install -y chromium=147.0.7727.116-1xtradeb1.2404.1; \
+    apt install -y chromium=151.0.7922.71-1xtradeb1.2404.1; \
     elif [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
-    apt install -y chromium=147.0.7727.116-1xtradeb1.2404.1; \
+    apt install -y chromium=151.0.7922.71-1xtradeb1.2404.1; \
     fi && \
     # fonts for chrome
     apt install -y fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst && \
@@ -83,16 +83,16 @@ RUN npm install --save --save-exact @jsreport/jsreport-ejs@4.1.0 \
     @jsreport/jsreport-pug@5.1.0 \
     @jsreport/jsreport-aws-s3-storage@4.2.0 \
     @jsreport/jsreport-azure-storage@4.2.0 \
-    @jsreport/jsreport-docxtemplater@4.2.1 \
+    @jsreport/jsreport-docxtemplater@4.2.2 \
     @jsreport/jsreport-mssql-store@4.2.2 \
     @jsreport/jsreport-postgres-store@4.3.2 \
     @jsreport/jsreport-mongodb-store@4.2.0 \
     @jsreport/jsreport-office-password@4.2.0 \
     @jsreport/jsreport-html-to-text@4.3.0 \
-    @jsreport/jsreport-html-embedded-in-docx@4.2.1 \
+    @jsreport/jsreport-html-embedded-in-docx@4.2.2 \
     @jsreport/jsreport-fs-store-aws-s3-persistence@4.2.1 \
     @jsreport/jsreport-fs-store-azure-storage-persistence@4.2.0 \
-    @jsreport/jsreport-unoconv@4.2.0 \
+    @jsreport/jsreport-unoconv@4.2.1 \
     @jsreport/jsreport-libreoffice@1.1.0 \
     cheerio-page-eval@1.4.0
 
