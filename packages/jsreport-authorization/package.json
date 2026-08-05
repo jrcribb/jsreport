@@ -35,9 +35,9 @@
   },
   "devDependencies": {
     "@jsreport/jsreport-authentication": "4.3.2",
-    "@jsreport/jsreport-core": "4.11.0",
+    "@jsreport/jsreport-core": "4.11.1",
     "@jsreport/jsreport-express": "4.3.3",
-    "@jsreport/jsreport-fs-store": "4.2.0",
+    "@jsreport/jsreport-fs-store": "4.2.1",
     "@jsreport/studio-dev": "4.1.0",
     "mocha": "11.7.5",
     "ncp": "2.0.0",

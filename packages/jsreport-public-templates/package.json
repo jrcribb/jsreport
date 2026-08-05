@@ -1,6 +1,6 @@
 {
   "name": "@jsreport/jsreport-public-templates",
-  "version": "4.1.1",
+  "version": "4.1.2",
   "description": "jsreport extension for granting public access to particular templates",
   "keywords": [
     "jsreport"
@@ -32,7 +32,7 @@
   "devDependencies": {
     "@jsreport/jsreport-authentication": "4.3.2",
     "@jsreport/jsreport-authorization": "4.2.0",
-    "@jsreport/jsreport-core": "4.11.0",
+    "@jsreport/jsreport-core": "4.11.1",
     "@jsreport/jsreport-express": "4.3.3",
     "@jsreport/studio-dev": "4.1.0",
     "mocha": "11.7.5",
