@@ -29,7 +29,7 @@
     "test": "set DEBUG=jsreport && mocha --timeout 5000 test && standard"
   },
   "dependencies": {
-    "@jsreport/mingo": "2.4.1",
+    "@jsreport/mingo": "2.4.2",
     "@jsreport/serializator": "1.1.0",
     "chokidar": "3.5.3",
     "lockfile": "1.0.4",

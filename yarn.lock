@@ -2686,10 +2686,10 @@
     serializator "1.0.2"
     uuid "8.3.2"
 
-"@jsreport/mingo@2.4.1":
-  version "2.4.1"
-  resolved "https://registry.yarnpkg.com/@jsreport/mingo/-/mingo-2.4.1.tgz#019ff48079a3ffeff2a5d8f1380386b921a0fc81"
-  integrity sha512-6ZXpnsXoLvXf8t1aGhJ3TamVdi3tHfDGlNs5qfaIQfIlUkga6x6juQD+9twO5NHn+PKKct/FQQBScOqC0SsrmA==
+"@jsreport/mingo@2.4.2":
+  version "2.4.2"
+  resolved "https://registry.yarnpkg.com/@jsreport/mingo/-/mingo-2.4.2.tgz#4655765024e3fceeabb0f2dcb7cdc5addd64a4a7"
+  integrity sha512-AVTqrTxzl50CJhUfeL1f0X+SwR5ZwCIu4WiwkJYG9I1On/xizOSJ5kIccVbh1CNNzsAgkrJ46W0fQVnlnlYwWA==
 
 "@jsreport/node-signpdf@1.4.3":
   version "1.4.3"
