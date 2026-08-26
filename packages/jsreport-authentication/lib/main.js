@@ -24,7 +24,7 @@ const viewsPath = path.join(__dirname, '../public/views')
 const basicSchemaReg = /Basic/i
 const bearerSchemaReg = /Bearer/i
 // eslint-disable-next-line
-const absoluteUrlReg = new RegExp('^(?:[a-z]+:)?//', 'i')
+const ABSOLUTE_URL_REGEXP = new RegExp('^(?:[a-z]+:)?//', 'i')
 
 function addPassport (reporter, app, admin, definition) {
   if (app.isAuthenticated) {
@@ -280,9 +280,10 @@ function addPassport (reporter, app, admin, definition) {
     })
 
     app.post('/login', bodyParser.urlencoded({ extended: true, limit: '2mb' }), (req, res, next) => {
-      if (req.query.returnUrl && absoluteUrlReg.test(req.query.returnUrl)) {
+      if (req.query.returnUrl && isUnsecureURL(req.query.returnUrl)) {
         return res.status(400).end('Unsecure returnUrl')
       }
+
       req.session.viewModel = req.session.viewModel || {}
 
       passport.authenticate('local', (err, user) => {
@@ -293,6 +294,7 @@ function addPassport (reporter, app, admin, definition) {
         if (err || !user) {
           const info = (err ? err.authInfo : undefined) || {}
           req.session.viewModel.login = info.message
+          // in this case encode the returnUrl, it is a URI component of the redirect url
           return res.redirect(reporter.options.appPath + '?returnUrl=' + encodeURIComponent(req.query.returnUrl || '/'))
         }
 
@@ -306,7 +308,8 @@ function addPassport (reporter, app, admin, definition) {
           req.context.user = req.user = user
           reporter.logger.info(`Logging in user ${user.name}`)
 
-          return res.redirect(decodeURIComponent(req.query.returnUrl) || reporter.options.appPath)
+          // in this case use url as it is, it is already validated and decoded by express
+          return res.redirect(req.query.returnUrl || reporter.options.appPath)
         })
       })(req, res, next)
     })
@@ -396,7 +399,7 @@ function addPassport (reporter, app, admin, definition) {
 
   if (supportsAuthorizationServer) {
     app.get('/auth-server/login', (req, res, next) => {
-      if (req.query.returnUrl && absoluteUrlReg.test(req.query.returnUrl)) {
+      if (req.query.returnUrl && isUnsecureURL(req.query.returnUrl)) {
         return res.status(400).end('Unsecure returnUrl')
       }
 
@@ -661,6 +664,17 @@ function Authentication (reporter, admin) {
 
     return result
   }
+}
+
+function isUnsecureURL (targetUrl) {
+  // checks to prevent open redirect vulnerabilities.
+  // exclude backslash to prevent url parsing to treat backslash as forward slash and
+  // allow to escape the validation
+  if (targetUrl.includes('\\') || !targetUrl.startsWith('/') || ABSOLUTE_URL_REGEXP.test(targetUrl)) {
+    return true
+  }
+
+  return false
 }
 
 module.exports = function (reporter, definition) {

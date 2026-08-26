@@ -110,6 +110,20 @@ describe('authentication', () => {
       .expect(400)
   })
 
+  it('should 400 when returnUrl contains backslash', () => {
+    return request(reporter.express.app).post('/login?returnUrl=/\\evil.com')
+      .type('form')
+      .send({ username: 'admin', password: 'password' })
+      .expect(400)
+  })
+
+  it('should 400 when returnUrl contains a double url encoded forward slash', () => {
+    return request(reporter.express.app).post('/login?returnUrl=%252f%252fevil.com')
+      .type('form')
+      .send({ username: 'admin', password: 'password' })
+      .expect(400)
+  })
+
   it('should add the req.context.user', () => {
     return new Promise((resolve, reject) => {
       reporter.documentStore.collection('templates').beforeFindListeners.add('test', this, (q, proj, req) => {
