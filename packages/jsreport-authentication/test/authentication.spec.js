@@ -124,6 +124,22 @@ describe('authentication', () => {
       .expect(400)
   })
 
+  it('should 400 when returnUrl contains a tab before a protocol-relative host', () => {
+    // browsers strip tab/newline/CR from a URL before parsing it, so "/\t/evil.com"
+    // is read as "//evil.com", a redirect to a different host
+    return request(reporter.express.app).post('/login?returnUrl=' + encodeURIComponent('/\t/evil.com'))
+      .type('form')
+      .send({ username: 'admin', password: 'password' })
+      .expect(400)
+  })
+
+  it('should 400 when returnUrl contains a newline before a protocol-relative host', () => {
+    return request(reporter.express.app).post('/login?returnUrl=' + encodeURIComponent('/\n/evil.com'))
+      .type('form')
+      .send({ username: 'admin', password: 'password' })
+      .expect(400)
+  })
+
   it('should add the req.context.user', () => {
     return new Promise((resolve, reject) => {
       reporter.documentStore.collection('templates').beforeFindListeners.add('test', this, (q, proj, req) => {
