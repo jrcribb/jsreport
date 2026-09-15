@@ -669,8 +669,20 @@ function Authentication (reporter, admin) {
 function isUnsecureURL (targetUrl) {
   // checks to prevent open redirect vulnerabilities.
   // exclude backslash to prevent url parsing to treat backslash as forward slash and
-  // allow to escape the validation
-  if (targetUrl.includes('\\') || !targetUrl.startsWith('/') || ABSOLUTE_URL_REGEXP.test(targetUrl)) {
+  // allow to escape the validation.
+  // also exclude tab/newline/carriage return: the WHATWG URL parser strips these
+  // out wherever they appear before doing anything else, so a browser reading a
+  // Location header of e.g. "/\t/evil.com" sees "//evil.com", a protocol-relative
+  // redirect to a different host, even though the raw string here still starts
+  // with a single "/" and never matches ABSOLUTE_URL_REGEXP.
+  if (
+    targetUrl.includes('\\') ||
+    targetUrl.includes('\t') ||
+    targetUrl.includes('\n') ||
+    targetUrl.includes('\r') ||
+    !targetUrl.startsWith('/') ||
+    ABSOLUTE_URL_REGEXP.test(targetUrl)
+  ) {
     return true
   }
 
